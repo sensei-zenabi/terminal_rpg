@@ -11,6 +11,7 @@
 #define VIEWPORT_WIDTH 40  // Width of the visible portion of the game world
 #define VIEWPORT_HEIGHT 20 // Height of the visible portion of the game world
 #define MAX_GOBLINS 10     // Maximum number of goblins to spawn
+#define GOBLIN_EXP 5       // Experience gained for each goblin kill
 
 // Player and enemy structures for holding stats
 typedef struct {
@@ -18,8 +19,9 @@ typedef struct {
     int health;
     int attack;
     int defense;
-    int x; // Character's x position
-    int y; // Character's y position
+    int x;   // Character's x position
+    int y;   // Character's y position
+    int exp; // Player's experience
 } Character;
 
 // Function prototypes
@@ -36,13 +38,14 @@ void save_game_state(char world[MAX_HEIGHT][MAX_WIDTH], Character player, Charac
 bool load_game_state(char world[MAX_HEIGHT][MAX_WIDTH], Character *player, Character goblins[], int *goblin_count, const char *filename);
 void generate_procedural_dungeon(char world[MAX_HEIGHT][MAX_WIDTH], Character *player, Character goblins[], int *goblin_count);
 void connect_rooms_with_corridor(char world[MAX_HEIGHT][MAX_WIDTH], int x1, int y1, int x2, int y2);
+int roll_dice(int sides);
 
 // Struct to store original terminal settings so we can restore them later
 struct termios orig_termios;
 
 int main() {
     char world[MAX_HEIGHT][MAX_WIDTH];  // Buffer to hold the game world
-    Character player = {"Hero", 100, 20, 5, 0, 0};  // Player stats
+    Character player = {"Hero", 100, 20, 5, 0, 0, 0};  // Player stats (including experience)
     Character goblins[MAX_GOBLINS];  // Array to hold goblin stats
     int goblin_count = 0;  // Number of goblins
 
@@ -96,8 +99,10 @@ int main() {
                     return 0;  // End the game
                 }
                 if (goblins[i].health <= 0) {
-                    // Remove the goblin from the world
+                    // Remove the goblin from the world and grant experience
                     world[goblins[i].x][goblins[i].y] = ' ';
+                    player.exp += GOBLIN_EXP;  // Grant experience to the player
+                    snprintf(event_log, sizeof(event_log), "Goblin defeated! Gained %d XP.", GOBLIN_EXP);
                 }
             }
         }
@@ -155,7 +160,7 @@ void generate_procedural_dungeon(char world[MAX_HEIGHT][MAX_WIDTH], Character *p
         if (r > 0 && *goblin_count < MAX_GOBLINS) {
             int goblin_x = room_x + rand() % room_height;
             int goblin_y = room_y + rand() % room_width;
-            goblins[*goblin_count] = (Character){"Goblin", 50, 10, 2, goblin_x, goblin_y};
+            goblins[*goblin_count] = (Character){"Goblin", 50, 10, 2, goblin_x, goblin_y, 0};
             world[goblin_x][goblin_y] = 'G';
             (*goblin_count)++;
         }
@@ -303,7 +308,7 @@ bool has_line_of_sight(char world[MAX_HEIGHT][MAX_WIDTH], int player_x, int play
 // Function to display the info section with player/goblin stats and event log
 void display_info_section(Character player, Character goblins[], int goblin_count, const char *event_log) {
     printf("\n--- Info Section ---\n");
-    printf("Player: %s | HP: %d | ATK: %d | DEF: %d\n", player.name, player.health, player.attack, player.defense);
+    printf("Player: %s | HP: %d | ATK: %d | DEF: %d | XP: %d\n", player.name, player.health, player.attack, player.defense, player.exp);
 
     // Display goblin info if any goblins are nearby
     for (int i = 0; i < goblin_count; i++) {
@@ -315,10 +320,11 @@ void display_info_section(Character player, Character goblins[], int goblin_coun
     printf("Event: %s\n", event_log);
 }
 
-// Function to start turn-based combat between the player and a goblin
+// Function to start turn-based combat between the player and a goblin using D&D-like dice rolls
 void start_turn_based_combat(Character *player, Character *goblin) {
     printf("\n--- Combat Mode ---\n");
     char move;
+
     while (player->health > 0 && goblin->health > 0) {
         // Display combat options
         printf("Player: HP = %d, Goblin: HP = %d\n", player->health, goblin->health);
@@ -327,16 +333,37 @@ void start_turn_based_combat(Character *player, Character *goblin) {
 
         // Player chooses to attack
         if (move == 'a') {
-            printf("Player attacks!\n");
-            goblin->health -= (player->attack - goblin->defense);
+            printf("Player rolls to attack...\n");
+            int attack_roll = roll_dice(20);
+            int defense_roll = roll_dice(20);
+
+            // Determine if the attack is successful based on D20 roll
+            if (attack_roll >= defense_roll) {
+                int damage_roll = roll_dice(6);  // Roll for damage using D6
+                goblin->health -= damage_roll;
+                printf("Player's attack hits! Goblin takes %d damage.\n", damage_roll);
+            } else {
+                printf("Player's attack misses!\n");
+            }
+
             if (goblin->health <= 0) {
                 printf("Goblin is defeated!\n");
                 return;
             }
 
             // Goblin's turn to attack
-            printf("Goblin attacks!\n");
-            player->health -= (goblin->attack - player->defense);
+            printf("Goblin rolls to attack...\n");
+            attack_roll = roll_dice(20);
+            defense_roll = roll_dice(20);
+
+            if (attack_roll >= defense_roll) {
+                int damage_roll = roll_dice(6);  // Roll for damage using D6
+                player->health -= damage_roll;
+                printf("Goblin's attack hits! Player takes %d damage.\n", damage_roll);
+            } else {
+                printf("Goblin's attack misses!\n");
+            }
+
             if (player->health <= 0) {
                 printf("Player is defeated!\n");
                 return;
@@ -349,8 +376,23 @@ void start_turn_based_combat(Character *player, Character *goblin) {
             move = getchar();
             // In combat, moving will end the turn and allow goblin to attack
             printf("Goblin attacks as you move!\n");
-            player->health -= (goblin->attack - player->defense);
-            return;
+            int attack_roll = roll_dice(20);
+            int defense_roll = roll_dice(20);
+
+            if (attack_roll >= defense_roll) {
+                int damage_roll = roll_dice(6);  // Roll for damage using D6
+                player->health -= damage_roll;
+                printf("Goblin's attack hits! Player takes %d damage.\n", damage_roll);
+            } else {
+                printf("Goblin's attack misses!\n");
+            }
+
+            if (player->health <= 0) {
+                printf("Player is defeated!\n");
+                return;
+            }
+
+            return;  // Allow player to move
         }
     }
 }
@@ -377,7 +419,7 @@ void save_game_state(char world[MAX_HEIGHT][MAX_WIDTH], Character player, Charac
     }
 
     // Save player stats
-    fprintf(file, "Player %d %d %d %d %d\n", player.health, player.attack, player.defense, player.x, player.y);
+    fprintf(file, "Player %d %d %d %d %d %d\n", player.health, player.attack, player.defense, player.x, player.y, player.exp);
 
     // Save goblin stats
     for (int i = 0; i < goblin_count; i++) {
@@ -404,7 +446,7 @@ bool load_game_state(char world[MAX_HEIGHT][MAX_WIDTH], Character *player, Chara
     }
 
     // Load player stats
-    fscanf(file, "Player %d %d %d %d %d\n", &player->health, &player->attack, &player->defense, &player->x, &player->y);
+    fscanf(file, "Player %d %d %d %d %d %d\n", &player->health, &player->attack, &player->defense, &player->x, &player->y, &player->exp);
 
     // Load goblin stats
     *goblin_count = 0;
@@ -429,5 +471,10 @@ void enable_raw_mode() {
 // Function to disable raw mode and restore original terminal settings
 void disable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);  // Restore original settings
+}
+
+// Function to simulate a dice roll with a given number of sides (e.g., D20, D6)
+int roll_dice(int sides) {
+    return rand() % sides + 1;
 }
 
